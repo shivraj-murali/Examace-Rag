@@ -10,9 +10,6 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 from langchain.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_community.document_loaders import PyPDFDirectoryLoader
-from langchain_mongodb import MongoDBAtlasVectorSearch
-from pymongo import MongoClient
-from langchain_huggingface import HuggingFaceEndpoint
 from dotenv import load_dotenv
 from flask_cors import CORS, cross_origin
 from pptx import Presentation
