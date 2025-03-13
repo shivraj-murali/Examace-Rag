@@ -25,8 +25,9 @@ load_dotenv()
 embeddings = HuggingFaceEmbeddings(model_name="mixedbread-ai/mxbai-embed-large-v1", encode_kwargs={'precision': 'binary'})
 
 # Vector Store
-one_bit_vectorstore = FAISS.load_local("OSAnd", embeddings, allow_dangerous_deserialization=True)
-retriever = one_bit_vectorstore.as_retriever(search_kwargs={"k": 10})  # Increased context retrieval
+faiss_path = os.getenv('FAISS_PATH', 'OSAnd')  # Use environment variable or default to OSAnd
+one_bit_vectorstore = FAISS.load_local(faiss_path, embeddings, allow_dangerous_deserialization=True)
+retriever = one_bit_vectorstore.as_retriever(search_kwargs={"k": 10})
 
 app = Flask(__name__)
 cors = CORS(app)
@@ -97,12 +98,33 @@ def is_comparative_or_exploratory_question(question):
     # Check if any comparative keywords are in the question
     return any(keyword in lower_question for keyword in comparative_keywords)
 
+def enhance_query(query):
+    """Enhance the query to get more detailed responses"""
+    if query.lower().startswith("what is "):
+        enhanced_query = query.lower().replace("what is ", "Explain the concept of ", 1)
+    elif query.lower().startswith("define "):
+        enhanced_query = query.lower().replace("define ", "Provide a detailed definition of ", 1)
+    elif query.lower().startswith("who is "):
+        enhanced_query = query.lower().replace("who is ", "Explain the significance of ", 1)
+    else:
+        # Add a request for detail
+        enhanced_query = f"Provide a comprehensive explanation of: {query}. Include examples and relevant context."
+
+    return enhanced_query
+
 @app.route("/", methods=['POST'])
 def hello_world():
     content = request.json
 
     # Gemini model configuration
     model = genai.GenerativeModel('gemini-1.5-pro')
+
+    # Add basic validation for question content
+    if 'question' not in content or not content['question'].strip():
+        return {"answer": "Please provide a valid question."}, 400
+
+    # Enhance the query
+    enhanced_question = enhance_query(content['question'])
 
     # Improved template with flexible answering strategy
     template = """
@@ -118,30 +140,27 @@ Guidelines for Response:
 
 3. If no relevant information is available in the vector database, the response will clearly state that the information is not present. General knowledge or external sources will not be used.
 
-4. Answers will be precise, structured, and directly relevant to the query. Citations will be provided in a reference format, ensuring clarity and credibility.
-
+8. Include sufficient details to ensure complete understanding while maintaining clarity.
+4. Answers will be precise, structured, and directly relevant to the query, while providing sufficient depth to fully explain concepts. Responses will balance conciseness with comprehensive explanations that ensure complete understanding of the topic. Technical details will be included where necessary, and complex ideas will be broken down into digestible components. Citations will be provided in a reference format, ensuring clarity and credibility.
 5. Every claim or piece of information in the response will be accompanied by an inline reference number [1], [2], etc., which corresponds to the citation list at the end. The "Sources" section will list the exact document name and section from the vector database used to generate the response.
 
 6. If no information is found in the vector database, the response will explicitly state:"No relevant information is available in the vector database."
 
 7. Every response will end with a structured "Sources:" section that lists the exact document names and sections from which the information was retrieved.
+8. If you cannot find a direct answer, provide the most relevant information available and indicate limitations.
     """
-
-    # Add basic validation for question content
-    if 'question' not in content or not content['question'].strip():
-        return {"answer": "Please provide a valid question."}, 400
 
     # Add error handling for the API call
     try:
         # Retrieve context first
-        context_docs = retriever.invoke(content['question'])
+        context_docs = retriever.invoke(enhanced_question)
         context_text = "\n".join([doc.page_content for doc in context_docs])
 
         # Determine if it's a comparative or exploratory question
-        is_comparative = is_comparative_or_exploratory_question(content['question'])
+        is_comparative = is_comparative_or_exploratory_question(enhanced_question)
 
         # Prepare the full prompt
-        full_prompt = template.format(context=context_text, question=content['question'])
+        full_prompt = template.format(context=context_text, question=enhanced_question)
 
         # If it's a comparative or exploratory question, add more context
         if is_comparative and context_text:
